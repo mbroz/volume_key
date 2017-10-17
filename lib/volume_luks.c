@@ -65,13 +65,8 @@ my_strerror (int err_no)
 static void
 error_from_cryptsetup (GError **error, LIBVKError code, int res)
 {
-  /* It's not possible to get the error message length from libcryptsetup, just
-     guess. */
-  char crypt_msg[4096];
-
-  crypt_get_error (crypt_msg, sizeof (crypt_msg));
-  if (crypt_msg[0] != '\0')
-    g_set_error (error, LIBVK_ERROR, code, "%s", crypt_msg);
+  if (error && *error && (*error)->message)
+    (*error)->code = code;
   else
     {
       char *s;
@@ -80,6 +75,16 @@ error_from_cryptsetup (GError **error, LIBVKError code, int res)
       g_set_error (error, LIBVK_ERROR, code, "%s", s);
       g_free (s);
     }
+}
+
+void cryptsetup_log (int level, const char *msg, void *usrptr)
+{
+  GError **error = usrptr;
+
+  if (level != CRYPT_LOG_ERROR)
+    return;
+  g_clear_error(error);
+  g_set_error (error, LIBVK_ERROR, -1, "%s", msg);
 }
 
 /* Open volume PATH and load its header.
@@ -93,6 +98,7 @@ open_crypt_device (const char *path, GError **error)
   r = crypt_init (&cd, path);
   if (r < 0)
     goto err;
+  crypt_set_log_callback(cd, cryptsetup_log, error);
   r = crypt_load (cd, CRYPT_LUKS1, NULL);
   if (r < 0)
     goto err_cd;
@@ -307,6 +313,7 @@ luks_get_secret (struct libvk_volume *vol, enum libvk_secret secret_type,
 	  g_prefix_error (error, _("Error getting LUKS data encryption key: "));
 	  goto err_prompt;
 	}
+      g_clear_error(error);
     }
   g_set_error (error, LIBVK_ERROR, LIBVK_ERROR_FAILED,
 	       _("Too many attempts to get a valid passphrase"));
